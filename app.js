@@ -58,7 +58,7 @@ const stages = [
       reward: "Silver gear",
       hint: "Use the margin note and the four seasonal symbols, not the books' printed titles.",
       advancedSteps: [
-        { minTier: 2, prompt: "Which item from the study unlocks the ledger drawer?", answer: "ironkey", success: "The ledger confirms that the seasonal order is intentional.", reward: "Library index", hint: "Use the first reward from the study, with no space." },
+        { minTier: 2, requires: ["Iron key"], prompt: "Which item from the study unlocks the ledger drawer?", answer: "ironkey", success: "The ledger confirms that the seasonal order is intentional.", reward: "Library index", hint: "Use the first reward from the study, with no space." },
         { minTier: 3, prompt: "The ledger points to the shape on the charcoal rubbing. Name it.", answer: "triangle", success: "The triangle is stamped beside the seasonal sequence.", reward: "Triangle mark", hint: "It has three sides." },
         { minTier: 4, prompt: "Combine the seasonal sequence with the gear revealed by the shelf. Enter the sequence followed by the object.", answer: "sfhfgear", success: "The concealed compartment recognizes the linked evidence.", reward: "Library mechanism", hint: "Use SFHF, then the thing that turns." },
         { minTier: 5, prompt: "The catalogue card names the family whose seal appears on the key and portrait. Enter the family name.", answer: "ashcroft", success: "A second panel opens behind the catalogue.", reward: "Ashcroft catalogue", hint: "It is the estate name." }
@@ -85,7 +85,7 @@ const stages = [
       reward: "Brass lens",
       hint: "The blueprint describes actions, then the tools that perform them. Enter only their initials.",
       advancedSteps: [
-        { minTier: 2, prompt: "Which workshop reward from the library fits the mechanism's central socket?", answer: "silvergear", success: "The silver gear meshes with the workshop teeth.", reward: "Gear alignment", hint: "Use the item revealed in the library, with no space." },
+        { minTier: 2, requires: ["Silver gear"], prompt: "Which workshop reward from the library fits the mechanism's central socket?", answer: "silvergear", success: "The silver gear meshes with the workshop teeth.", reward: "Gear alignment", hint: "Use the item revealed in the library, with no space." },
         { minTier: 3, prompt: "The workbench groove matches the study's first reward. What is it?", answer: "ironkey", success: "The iron key traces a second line on the blueprint.", reward: "Keyed blueprint", hint: "It opened the first drawer." },
         { minTier: 4, prompt: "The blueprint's final diagram shows the library's three-sided mark. Enter its name.", answer: "triangle", success: "The triangle locks the tool sequence in place.", reward: "Workshop diagram", hint: "The rubbing showed this shape." },
         { minTier: 5, prompt: "The copper plate is signed with the estate family name. Enter it.", answer: "ashcroft", success: "The mechanism opens fully and exposes a passage to the chamber.", reward: "Workshop seal", hint: "Read the name on the estate." }
@@ -112,7 +112,7 @@ const stages = [
       reward: "Chamber seal",
       hint: "The three objects you carry map directly to the three symbols: gear, lens, triangle.",
       advancedSteps: [
-        { minTier: 2, prompt: "Which library reward forms the lock's base?", answer: "silvergear", success: "The gear ring clicks into the triangular lock.", reward: "Gear ring", hint: "It was revealed behind the library shelf." },
+        { minTier: 2, requires: ["Silver gear"], prompt: "Which library reward forms the lock's base?", answer: "silvergear", success: "The gear ring clicks into the triangular lock.", reward: "Gear ring", hint: "It was revealed behind the library shelf." },
         { minTier: 3, prompt: "Which workshop reward reveals the apex?", answer: "brasslens", success: "The lens ring catches the candlelight.", reward: "Lens ring", hint: "It was found in the workshop compartment." },
         { minTier: 4, prompt: "The three rings echo the study's face-and-hands notation. What shape completes them?", answer: "triangle", success: "The triangle ring completes the chamber seal.", reward: "Triangle ring", hint: "The charcoal rubbing has three sides." },
         { minTier: 5, prompt: "The star map carries the same family name as the estate. Enter it.", answer: "ashcroft", success: "The secret chamber opens and the final inscription is revealed.", reward: "Chamber inscription", hint: "It is the name repeated in every room." }
@@ -139,7 +139,7 @@ const stages = [
       reward: "The Star of Ashcroft",
       hint: "Return to the exact answer of the first riddle.",
       advancedSteps: [
-        { minTier: 2, prompt: "The chamber seal points beneath the object that makes the long shadow. What is it?", answer: "clock", success: "The shadow marks a loose floor tile.", reward: "Shadow location", hint: "Return to the first room's answer." },
+        { minTier: 2, requires: ["Chamber seal"], prompt: "The chamber seal points beneath the object that makes the long shadow. What is it?", answer: "clock", success: "The shadow marks a loose floor tile.", reward: "Shadow location", hint: "Return to the first room's answer." },
         { minTier: 3, prompt: "The loose tile is opened by the chamber's reward. Name it.", answer: "chamberseal", success: "The tile reveals a star-shaped recess.", reward: "Star recess", hint: "Use the seal earned in the chamber." },
         { minTier: 4, prompt: "The compass points toward the shape used by the chamber lock. What shape is it?", answer: "triangle", success: "The triangular recess releases the velvet case clasp.", reward: "Case clasp", hint: "The lock and rubbing share this shape." },
         { minTier: 5, prompt: "What artifact belongs inside the velvet case?", answer: "star", success: "The velvet case opens and the Star of Ashcroft shines beneath the clock's shadow.", reward: "The Star of Ashcroft", hint: "The story has named the missing object from the beginning." }
@@ -220,6 +220,7 @@ function solveCurrent() {
   const stage = currentStage();
   const puzzle = currentPuzzle();
   if (stageEvidenceCount() < currentDifficulty().minEvidence) { state.feedback = `Collect at least ${currentDifficulty().minEvidence} pieces of evidence in this room first.`; render(); return; }
+  if (puzzle.requires?.some(item => !state.inventory.includes(item))) { state.feedback = "This lock depends on an item from an earlier room. Review your inventory and connected clues."; render(); return; }
   if (!state.inventory.includes(puzzle.reward)) state.inventory.push(puzzle.reward);
   addClue(puzzle.success);
   if (state.puzzleStep < advancedSteps().length) { state.puzzleStep += 1; state.feedback = "Correct. " + puzzle.success; state.modal = "puzzle"; saveSession(); render(); return; }
