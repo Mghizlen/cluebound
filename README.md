@@ -14,7 +14,15 @@ Then visit `http://localhost:8000`.
 
 ## How to play
 
-Choose a session duration before beginning. Click highlighted objects to inspect them, read the investigator's log, enter puzzle answers, and use hints when needed. The intended answers are:
+Choose a session duration before beginning. The duration selects the difficulty automatically:
+
+- **15 minutes - Detective:** straightforward clues, fewer objects, and one puzzle step per room.
+- **30 minutes - Investigator:** more objects, two evidence-based puzzle steps, and misleading details.
+- **60 minutes - Master Detective:** three connected steps per room and evidence from earlier rooms.
+- **90 minutes - Expert:** four linked steps per room, more objects, and subtler hints.
+- **120 minutes - Legendary Detective:** five connected steps per room and the largest object set.
+
+The selected difficulty appears in the duration screen, tutorial, and game header. Click highlighted objects to inspect them, read the investigator's log, gather the required evidence, enter puzzle answers, and use hints when needed. The base answer key for the Detective path is:
 
 1. `clock`
 2. `SFHF`
