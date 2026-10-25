@@ -148,8 +148,9 @@ const stages = [
   }
 ];
 
-const state = { view: "menu", selectedDuration: 30, difficultyKey: "investigator", stageIndex: 0, inventory: [], clues: [], inspected: [], hintedStages: [], hintText: "", hintsUsed: 0, startedAt: null, deadline: null, paused: false, pausedDisplaySeconds: null, puzzleStep: 0, solved: [], modal: null, feedback: "", toast: "", timerId: null };
+const state = { view: "auth", selectedDuration: 30, difficultyKey: "investigator", authMode: "signin", authError: "", authMessage: "", authLoading: false, user: null, serverAuthorized: false, serverSessionId: null, cooldownUntil: null, serverOffsetMs: 0, stageIndex: 0, inventory: [], clues: [], inspected: [], hintedStages: [], hintText: "", hintsUsed: 0, startedAt: null, deadline: null, paused: false, pausedDisplaySeconds: null, puzzleStep: 0, solved: [], modal: null, feedback: "", toast: "", timerId: null };
 let renderedClueCount = 0;
+let lastServerCheckAt = 0;
 const app = document.querySelector("#app");
 const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
 const formatTime = seconds => `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
@@ -166,10 +167,82 @@ const difficultyPlan = level => stages.map(stage => ({
   clueCount: stage.objects.filter(object => object.type === "clue" && (!object.minTier || object.minTier <= level.tier)).length,
   stepCount: 1 + (stage.puzzle.advancedSteps || []).filter(step => step.minTier <= level.tier).length
 }));
+const serverNow = () => Date.now() + state.serverOffsetMs;
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, { credentials: "include", ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) { const error = new Error(data.error || "The service did not authorize this action."); error.status = response.status; error.data = data; throw error; }
+  return data;
+}
+function authFailureMessage(error) {
+  if (error.status === 503) return "The secure session service is not configured yet. Ask the game owner to add Supabase settings in Vercel.";
+  if (error.status === 401) return "Your sign-in has expired. Please sign in again.";
+  if (error.status === 409) return error.message || "This account has an active session on another device or is in cooldown.";
+  return error.message || "The secure session service is unavailable. Try again later.";
+}
+async function checkServerStatus({ silent = false } = {}) {
+  try {
+    const status = await apiRequest("/api/session/status");
+    state.serverAuthorized = true;
+    state.serverOffsetMs = Date.parse(status.server_time || new Date().toISOString()) - Date.now();
+    state.cooldownUntil = status.cooldown_until || null;
+    if (status.state === "cooldown") { state.view = "cooldown"; state.serverSessionId = null; stopTimer(); render(); return status; }
+    if (status.state === "active") {
+      if (!status.same_device) { state.view = "deviceBlocked"; stopTimer(); render(); return status; }
+      state.serverSessionId = status.session_id;
+      state.selectedDuration = Number(status.duration_minutes) || state.selectedDuration;
+      state.difficultyKey = status.difficulty || difficultyForDuration(state.selectedDuration).key;
+      state.startedAt = Date.parse(status.started_at);
+      state.deadline = Date.parse(status.expires_at);
+      if (status.progress) Object.assign(state, status.progress);
+      try {
+        const local = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        if (local?.serverSessionId === status.session_id && local.deadline === state.deadline) Object.assign(state, { stageIndex: local.stageIndex, inventory: local.inventory || [], clues: local.clues || [], inspected: local.inspected || [], hintedStages: local.hintedStages || [], hintText: local.hintText || "", hintsUsed: local.hintsUsed || 0, puzzleStep: local.puzzleStep || 0, solved: local.solved || [] });
+      } catch { /* Ignore corrupt local progress; server session remains authoritative. */ }
+      state.view = "game";
+      render(); startTimer();
+      return status;
+    }
+    state.serverSessionId = null;
+    state.serverAuthorized = true;
+    if (!silent) { state.view = "menu"; render(); }
+    return status;
+  } catch (error) {
+    if (!silent || error.status === 401 || error.status === 409 || error.status === 503) { state.serverAuthorized = false; state.authError = authFailureMessage(error); state.view = error.status === 401 ? "auth" : "serverError"; stopTimer(); render(); }
+    throw error;
+  }
+}
+async function checkAuth() {
+  try {
+    const result = await apiRequest("/api/auth/me");
+    state.user = result.user;
+    await checkServerStatus();
+  } catch (error) {
+    state.user = null;
+    state.authError = authFailureMessage(error);
+    state.view = error.status === 401 ? "auth" : "serverError";
+    render();
+  }
+}
+async function submitAuth() {
+  const email = document.querySelector("[data-auth-email]")?.value.trim();
+  const password = document.querySelector("[data-auth-password]")?.value || "";
+  state.authLoading = true; state.authError = ""; state.authMessage = ""; render();
+  try {
+    const endpoint = state.authMode === "signup" ? "/api/auth/signup" : "/api/auth/signin";
+    const result = await apiRequest(endpoint, { method: "POST", body: JSON.stringify({ email, password }) });
+    if (result.confirmation_required) { state.authMessage = "Check your email to confirm your account, then sign in."; state.authLoading = false; render(); return; }
+    state.user = result.user; state.authLoading = false; await checkServerStatus();
+  } catch (error) { state.authLoading = false; state.authError = authFailureMessage(error); state.view = "auth"; render(); }
+}
+async function signOut() {
+  await fetch("/api/auth/signout", { method: "POST", credentials: "include" }).catch(() => {});
+  stopTimer(); clearSession(); Object.assign(state, { view: "auth", user: null, serverAuthorized: false, serverSessionId: null, deadline: null, authError: "", authMessage: "" }); render();
+}
 
 function saveSession() {
   if (!state.deadline || state.view !== "game") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ startedAt: state.startedAt, deadline: state.deadline, durationMinutes: state.selectedDuration, difficultyKey: state.difficultyKey, stageIndex: state.stageIndex, inventory: state.inventory, clues: state.clues, inspected: state.inspected, hintedStages: state.hintedStages, hintText: state.hintText, hintsUsed: state.hintsUsed, puzzleStep: state.puzzleStep, solved: state.solved }));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ serverSessionId: state.serverSessionId, startedAt: state.startedAt, deadline: state.deadline, durationMinutes: state.selectedDuration, difficultyKey: state.difficultyKey, stageIndex: state.stageIndex, inventory: state.inventory, clues: state.clues, inspected: state.inspected, hintedStages: state.hintedStages, hintText: state.hintText, hintsUsed: state.hintsUsed, puzzleStep: state.puzzleStep, solved: state.solved }));
 }
 function clearSession() { localStorage.removeItem(STORAGE_KEY); }
 function validStoredSession(session) {
@@ -185,17 +258,26 @@ function restoreSession() {
     render(); startTimer(); return true;
   } catch { clearSession(); return false; }
 }
-function startNewGame() { state.view = "duration"; state.modal = null; render(); }
-function beginSession() {
+function startNewGame() { if (!state.user || !state.serverAuthorized) { state.authError = "Sign in before starting an investigation."; state.view = "auth"; render(); return; } state.view = "duration"; state.modal = null; render(); }
+async function beginSession() {
   const minutes = Number(state.selectedDuration);
-  if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_MINUTES) return;
-  Object.assign(state, { view: "game", selectedDuration: minutes, difficultyKey: difficultyForDuration(minutes).key, stageIndex: 0, inventory: [], clues: [], inspected: [], hintedStages: [], hintText: "", hintsUsed: 0, startedAt: Date.now(), deadline: Date.now() + minutes * 60 * 1000, paused: false, pausedDisplaySeconds: null, puzzleStep: 0, solved: [], modal: "tutorial", feedback: "" });
-  saveSession(); render(); startTimer();
+  if (!Number.isInteger(minutes) || !durations.includes(minutes) || !state.user || !state.serverAuthorized) return;
+  state.feedback = ""; state.authError = ""; render();
+  try {
+    const session = await apiRequest("/api/session/start", { method: "POST", body: JSON.stringify({ duration: minutes }) });
+    Object.assign(state, { view: "game", selectedDuration: minutes, difficultyKey: session.difficulty || difficultyForDuration(minutes).key, serverSessionId: session.session_id, stageIndex: 0, inventory: [], clues: [], inspected: [], hintedStages: [], hintText: "", hintsUsed: 0, startedAt: Date.parse(session.started_at), deadline: Date.parse(session.expires_at), paused: false, pausedDisplaySeconds: null, puzzleStep: 0, solved: [], modal: "tutorial", feedback: "", serverAuthorized: true });
+    state.serverOffsetMs = Date.parse(session.server_time || new Date().toISOString()) - Date.now();
+    saveSession(); render(); startTimer();
+  } catch (error) {
+    state.authError = error.status === 409 ? (error.message || "This account cannot start a session yet.") : authFailureMessage(error);
+    state.view = error.status === 409 && error.message.toLowerCase().includes("cooldown") ? "cooldown" : "duration";
+    render();
+  }
 }
-function remainingSeconds() { return Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000)); }
-function ensureActive() { if (state.view !== "game" || !state.deadline || Date.now() >= state.deadline) { showExpired(); return false; } return true; }
+function remainingSeconds() { return Math.max(0, Math.ceil((state.deadline - serverNow()) / 1000)); }
+function ensureActive() { if (state.view !== "game" || !state.serverAuthorized || !state.serverSessionId || !state.deadline || serverNow() >= state.deadline) { showExpired(); return false; } return true; }
 function showExpired() { stopTimer(); clearSession(); Object.assign(state, { view: "expired", modal: null, deadline: null }); render(); }
-function startTimer() { stopTimer(); state.timerId = setInterval(() => { if (state.view === "game" && remainingSeconds() <= 0) showExpired(); else updateTimer(); }, 250); }
+function startTimer() { stopTimer(); state.timerId = setInterval(() => { if (state.view === "game" && remainingSeconds() <= 0) showExpired(); else updateTimer(); if (state.view === "game" && Date.now() - lastServerCheckAt > 15000) { lastServerCheckAt = Date.now(); checkServerStatus({ silent: true }).catch(() => {}); } }, 250); }
 function stopTimer() { if (state.timerId) clearInterval(state.timerId); state.timerId = null; }
 function updateTimer() { const timer = document.querySelector("[data-timer]"); if (!timer || state.paused) return; const seconds = remainingSeconds(); timer.textContent = formatTime(seconds); timer.classList.toggle("urgent", seconds <= 60); }
 function addClue(text) { if (!state.clues.includes(text)) state.clues.push(text); }
@@ -248,8 +330,12 @@ function nextStage() {
   state.stageIndex += 1; state.puzzleStep = 0; state.hintText = ""; state.feedback = ""; saveSession(); render();
 }
 function pauseGame() { if (!ensureActive()) return; state.paused = !state.paused; state.pausedDisplaySeconds = state.paused ? remainingSeconds() : null; state.modal = state.paused ? "paused" : null; render(); }
-function renderMenu() { return `<main class="screen"><section class="panel title-panel"><div class="eyebrow">An Ashcroft Estate mystery</div><h1>Cluebound</h1><p class="lede">A missing star. Five locked rooms. One investigator with the patience to read what the house left behind.</p><div class="button-row"><button class="button" data-action="new">Start New Game</button><span class="pill">A five-stage puzzle adventure</span></div><p class="muted">Created for curious investigators. Choose a time limit before you enter the estate.</p></section></main>`; }
-function renderDuration() { const selected = difficultyForDuration(state.selectedDuration); return `<main class="screen"><section class="panel duration-panel"><div class="eyebrow">Before you enter</div><h2>Set your session</h2><p>Choose how long you would like to investigate. The countdown begins only when you press Begin Investigation and cannot exceed 120 minutes.</p><div class="duration-grid">${difficultyLevels.map(level => `<button class="duration-choice ${state.selectedDuration === level.minutes ? "selected" : ""}" data-duration="${level.minutes}"><strong>${level.minutes}</strong><span>${escapeHtml(level.label)}</span></button>`).join("")}</div><div class="evidence"><strong>${escapeHtml(selected.label)}</strong><br>${escapeHtml(selected.description)}</div><p class="muted">When the timer reaches zero, the investigation ends so you can take a proper break.</p><div class="button-row"><button class="button" data-action="begin">Begin Investigation</button><button class="button secondary" data-action="menu">Back to Title</button></div></section></main>`; }
+function renderAuth() { return `<main class="screen"><section class="panel auth-panel"><div class="eyebrow">Ashcroft Estate access</div><h2>${state.authMode === "signup" ? "Create investigator account" : "Sign in to investigate"}</h2><p>Sessions are authorized securely so your play limit and cooldown apply across devices.</p><form data-auth-form><label>Email<input data-auth-email type="email" autocomplete="email" required></label><label>Password<input data-auth-password type="password" minlength="8" autocomplete="${state.authMode === "signup" ? "new-password" : "current-password"}" required></label>${state.authError ? `<p class="auth-error" role="alert">${escapeHtml(state.authError)}</p>` : ""}${state.authMessage ? `<p class="auth-message" role="status">${escapeHtml(state.authMessage)}</p>` : ""}<button class="button" data-action="auth-submit" ${state.authLoading ? "disabled" : ""}>${state.authLoading ? "Checking..." : state.authMode === "signup" ? "Create account" : "Sign in"}</button></form><button class="button secondary auth-switch" data-action="auth-mode">${state.authMode === "signup" ? "Already have an account? Sign in" : "New investigator? Create an account"}</button></section></main>`; }
+function renderCooldown() { const until = state.cooldownUntil ? new Date(state.cooldownUntil).toLocaleString() : "later"; return `<main class="screen"><section class="panel end-panel"><div class="eyebrow">Investigation cooldown</div><h2>Rest before returning</h2><p>Your 24-hour break ends after the session expiry recorded by the server.</p><p><strong>Available after: ${escapeHtml(until)}</strong></p><div class="button-row" style="justify-content:center"><button class="button secondary" data-action="signout">Sign out</button></div></section></main>`; }
+function renderDeviceBlocked() { return `<main class="screen"><section class="panel end-panel"><div class="eyebrow">Active session found</div><h2>Return on the original device</h2><p>This account already has an active investigation bound to another device. The server will not create a second session or reset its deadline.</p><div class="button-row" style="justify-content:center"><button class="button secondary" data-action="signout">Sign out</button></div></section></main>`; }
+function renderServerError() { return `<main class="screen"><section class="panel end-panel"><div class="eyebrow">Secure session unavailable</div><h2>Investigation paused</h2><p>${escapeHtml(state.authError || "The server could not verify your session.")}</p><p>Gameplay cannot start until authorization is confirmed.</p><div class="button-row" style="justify-content:center"><button class="button" data-action="retry-auth">Try again</button><button class="button secondary" data-action="signout">Sign out</button></div></section></main>`; }
+function renderMenu() { return `<main class="screen"><section class="panel title-panel"><div class="eyebrow">An Ashcroft Estate mystery</div><h1>Cluebound</h1><p class="lede">A missing star. Five locked rooms. One investigator with the patience to read what the house left behind.</p><div class="button-row"><button class="button" data-action="new">Start New Game</button><button class="button secondary" data-action="signout">Sign out ${escapeHtml(state.user?.email || "")}</button><span class="pill">A five-stage puzzle adventure</span></div><p class="muted">Choose your session duration before entering the estate.</p></section></main>`; }
+function renderDuration() { const selected = difficultyForDuration(state.selectedDuration); return `<main class="screen"><section class="panel duration-panel"><div class="eyebrow">Before you enter</div><h2>Set your session</h2><p>Choose how long you would like to investigate. The countdown begins only when you press Begin Investigation and cannot exceed 120 minutes.</p>${state.authError ? `<p class="auth-error" role="alert">${escapeHtml(state.authError)}</p>` : ""}<div class="duration-grid">${difficultyLevels.map(level => `<button class="duration-choice ${state.selectedDuration === level.minutes ? "selected" : ""}" data-duration="${level.minutes}"><strong>${level.minutes}</strong><span>${escapeHtml(level.label)}</span></button>`).join("")}</div><div class="evidence"><strong>${escapeHtml(selected.label)}</strong><br>${escapeHtml(selected.description)}</div><p class="muted">When the timer reaches zero, the investigation ends so you can take a proper break.</p><div class="button-row"><button class="button" data-action="begin">Begin Investigation</button><button class="button secondary" data-action="menu">Back to Title</button></div></section></main>`; }
 function renderGame() { const stage = currentStage(); const solved = state.solved.includes(state.stageIndex); const progress = Math.round((state.solved.length / stages.length) * 100); const displaySeconds = state.paused ? state.pausedDisplaySeconds : remainingSeconds(); const hintUsed = currentDifficulty().tier === 1 && state.hintedStages.includes(state.stageIndex); const feedbackVisible = Boolean(state.hintText) || state.feedback.startsWith("Found:"); const feedbackText = state.hintText || state.feedback; return `<main class="game-screen"><header class="game-header"><div class="brand">CLUEBOUND</div><div class="header-meta"><span>${escapeHtml(currentDifficulty().label)} · Stage ${state.stageIndex + 1} of ${stages.length}</span><span class="timer ${state.paused ? "paused" : ""}" data-timer>${state.paused ? "PAUSED" : formatTime(displaySeconds)}</span><button class="button secondary" data-action="pause">${state.paused ? "Resume" : "Pause"}</button></div></header><div class="game-layout"><section class="scene"><div class="scene-top"><div class="eyebrow">${escapeHtml(stage.subtitle)}</div><h2>${escapeHtml(stage.name)}</h2><p>${escapeHtml(stage.description)}</p></div><div class="room-art" aria-label="Interactive illustration of ${escapeHtml(stage.name)}">${activeObjects().map(object => `<button class="object obj-${object.id}" data-object="${object.id}"><small>${object.type === "puzzle" ? "Investigate" : "Evidence"}</small>${escapeHtml(object.label)}</button>`).join("")}</div></section><aside class="side-panel"><div class="side-section"><h3>Investigator's log</h3><p class="muted">${state.clues.length ? "Evidence collected:" : "Inspect objects to collect evidence."}</p><ul class="clue-list">${state.clues.map(clue => `<li class="clue-item">${escapeHtml(clue)}</li>`).join("") || "<li class=\"muted\">Your notebook is empty.</li>"}</ul></div><div class="side-section"><h3>Inventory</h3><ul class="inventory-list">${state.inventory.map(item => `<li class="inventory-item">${escapeHtml(item)}</li>`).join("") || "<li class=\"muted\">Nothing collected yet.</li>"}</ul></div><div class="side-section"><h3>Progress</h3><div class="progress-bar"><span style="width:${progress}%"></span></div><p class="muted">${state.solved.length} of ${stages.length} locks solved · ${stageEvidenceCount()}/${currentDifficulty().minEvidence} evidence</p><div class="button-row"><button class="button secondary" data-action="hint" ${hintUsed ? "disabled" : ""}>${hintUsed ? "Hint used" : "Use a hint"}</button>${solved && state.stageIndex < stages.length - 1 ? `<button class="button" data-action="next">Next room</button>` : ""}</div>${feedbackVisible ? `<p class="hint-message" role="status">${escapeHtml(feedbackText)}</p>` : ""}</div></aside></div>${renderModal()}</main>`; }
 function renderModal() { if (!state.modal) return ""; if (state.modal === "tutorial") return `<div class="modal-wrap"><section class="modal"><div class="eyebrow">${escapeHtml(currentDifficulty().label)} field notes</div><h2>How to investigate</h2><div class="tutorial"><p>Click the highlighted objects in each room to inspect them. Evidence goes into your log, while solved puzzles add useful items to your inventory.</p><p>This session has ${currentDifficulty().puzzleSteps} puzzle step${currentDifficulty().puzzleSteps === 1 ? "" : "s"} per room. The timer continues during a pause, so plan your investigation carefully.</p></div><button class="button" data-action="close-modal">Enter the study</button></section></div>`; if (state.modal === "paused") return `<div class="modal-wrap"><section class="modal"><div class="eyebrow">Investigation paused</div><h2>The house waits.</h2><p>Your session deadline continues to elapse while paused. Resume when you are ready.</p><button class="button" data-action="pause">Resume investigation</button></section></div>`; const puzzle = currentPuzzle(); const title = state.puzzleStep === 0 ? currentStage().puzzle.title : `${currentStage().puzzle.title} · Step ${state.puzzleStep + 1}`; const hintUsed = currentDifficulty().tier === 1 && state.hintedStages.includes(state.stageIndex); return `<div class="modal-wrap"><section class="modal"><div class="eyebrow">Puzzle ${state.stageIndex + 1} · Step ${state.puzzleStep + 1} of ${currentDifficulty().puzzleSteps}</div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(puzzle.prompt)}</p><div class="evidence">Collect ${currentDifficulty().minEvidence} piece${currentDifficulty().minEvidence === 1 ? "" : "s"} of evidence in this room before checking the answer. Answers are not case-sensitive.</div><div class="answer-row"><input data-answer aria-label="Puzzle answer" autocomplete="off" placeholder="Enter your answer"><button class="button" data-action="submit">Check</button></div><div class="feedback ${state.feedback.startsWith("Correct") ? "success" : ""}">${escapeHtml(state.hintText || state.feedback)}</div><div class="button-row"><button class="button secondary" data-action="hint" ${hintUsed ? "disabled" : ""}>${hintUsed ? "Hint used" : "Need a hint"}</button><button class="button secondary" data-action="close-modal">Keep investigating</button></div></section></div>`; }
 function renderExpired() { return `<main class="screen"><section class="panel end-panel"><div class="eyebrow">Session complete</div><h2>Time to step away</h2><p><strong>Enough with today's playing. Go do your homework or go out!</strong></p><p>Your play session has ended. Take a break and enjoy something offline.</p><div class="button-row" style="justify-content:center"><button class="button" data-action="menu">Return to title</button><button class="button secondary" data-action="close-tab">Close tab</button></div><p class="muted">If your browser keeps this tab open, please close it manually.</p></section></main>`; }
@@ -258,14 +344,16 @@ function render() {
   const oldClueList = app.querySelector(".clue-list");
   const oldScrollTop = oldClueList?.scrollTop ?? 0;
   const clueCount = state.clues.length;
-  app.innerHTML = state.view === "menu" ? renderMenu() : state.view === "duration" ? renderDuration() : state.view === "game" ? renderGame() : state.view === "expired" ? renderExpired() : renderComplete();
+  app.innerHTML = state.view === "auth" ? renderAuth() : state.view === "menu" ? renderMenu() : state.view === "duration" ? renderDuration() : state.view === "game" ? renderGame() : state.view === "cooldown" ? renderCooldown() : state.view === "deviceBlocked" ? renderDeviceBlocked() : state.view === "serverError" ? renderServerError() : state.view === "expired" ? renderExpired() : renderComplete();
   const newClueList = app.querySelector(".clue-list");
   if (newClueList) newClueList.scrollTop = clueCount > renderedClueCount ? newClueList.scrollHeight : oldScrollTop;
   renderedClueCount = clueCount;
 }
-app.addEventListener("click", event => { const target = event.target.closest("button"); if (!target) return; if (target.dataset.duration) { state.selectedDuration = Number(target.dataset.duration); render(); return; } const action = target.dataset.action; if (action === "new") startNewGame(); else if (action === "begin") beginSession(); else if (action === "menu") { clearSession(); stopTimer(); state.view = "menu"; render(); } else if (action === "pause") pauseGame(); else if (action === "close-modal") { state.modal = null; state.feedback = ""; render(); } else if (action === "submit") submitAnswer(); else if (action === "hint") useHint(); else if (action === "next") nextStage(); else if (action === "close-tab") window.close(); else if (target.dataset.object) inspect(target.dataset.object); });
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.view === "game" && !ensureActive()) return; updateTimer(); });
-window.addEventListener("focus", () => { if (state.view === "game") ensureActive(); });
+app.addEventListener("click", event => { const target = event.target.closest("button"); if (!target) return; if (target.dataset.duration) { state.selectedDuration = Number(target.dataset.duration); render(); return; } const action = target.dataset.action; if (action === "new") startNewGame(); else if (action === "begin") beginSession(); else if (action === "menu") { clearSession(); stopTimer(); state.view = state.user ? "menu" : "auth"; render(); } else if (action === "pause") pauseGame(); else if (action === "close-modal") { state.modal = null; state.feedback = ""; render(); } else if (action === "submit") submitAnswer(); else if (action === "hint") useHint(); else if (action === "next") nextStage(); else if (action === "close-tab") window.close(); else if (action === "auth-mode") { state.authMode = state.authMode === "signup" ? "signin" : "signup"; state.authError = ""; state.authMessage = ""; render(); } else if (action === "auth-submit") document.querySelector("[data-auth-form]")?.requestSubmit(); else if (action === "retry-auth") checkAuth(); else if (action === "signout") signOut(); else if (target.dataset.object) inspect(target.dataset.object); });
+app.addEventListener("submit", event => { if (event.target.matches("[data-auth-form]")) { event.preventDefault(); submitAuth(); } });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { if (state.view === "game") checkServerStatus({ silent: true }).catch(() => {}); else if (state.user) checkServerStatus({ silent: true }).catch(() => {}); updateTimer(); } });
+window.addEventListener("focus", () => { if (state.user) checkServerStatus({ silent: true }).catch(() => {}); });
 window.addEventListener("keydown", event => { if (event.key === "Enter" && document.querySelector("[data-answer]")) submitAnswer(); if (event.key === "Escape" && state.modal === "puzzle") { state.modal = null; render(); } });
-if (!restoreSession()) render();
+render();
+checkAuth();
 window.__CLUEBOUND_TESTS__ = { stages, difficultyLevels, difficultyForDuration, difficultyPlan, validStoredSession, remainingSeconds };

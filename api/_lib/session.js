@@ -9,6 +9,8 @@ const DIFFICULTY_BY_DURATION = {
   120: "legendary"
 };
 const DEVICE_COOKIE = "cluebound_device";
+const ACCESS_COOKIE = "cluebound_access";
+const REFRESH_COOKIE = "cluebound_refresh";
 
 export function configError() {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -28,15 +30,72 @@ export function readBearer(req) {
   return header.startsWith("Bearer ") ? header.slice(7) : null;
 }
 
-export async function verifiedUser(req) {
-  const token = readBearer(req);
+function readCookie(req, name) {
+  const cookies = req.headers.cookie || "";
+  const match = cookies.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
+function cookie(name, value, maxAge) {
+  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+export function setAuthCookies(res, session) {
+  if (!session?.access_token) return;
+  const maxAge = Math.max(60, Number(session.expires_in) || 3600);
+  const values = [cookie(ACCESS_COOKIE, session.access_token, maxAge)];
+  if (session.refresh_token) values.push(cookie(REFRESH_COOKIE, session.refresh_token, 2592000));
+  const existing = res.getHeader("Set-Cookie");
+  res.setHeader("Set-Cookie", existing ? [...(Array.isArray(existing) ? existing : [existing]), ...values] : values);
+}
+
+export function clearAuthCookies(res) {
+  res.setHeader("Set-Cookie", [cookie(ACCESS_COOKIE, "", 0), cookie(REFRESH_COOKIE, "", 0)]);
+}
+
+async function authFetch(path, body) {
+  return fetch(`${process.env.SUPABASE_URL}/auth/v1/${path}`, {
+    method: "POST",
+    headers: { apikey: process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+}
+
+export async function authPassword(email, password) {
+  const response = await authFetch("token?grant_type=password", { email, password });
+  return { response, data: await response.json().catch(() => null) };
+}
+
+export async function authSignup(email, password) {
+  const response = await authFetch("signup", { email, password });
+  return { response, data: await response.json().catch(() => null) };
+}
+
+export async function authSignout(token) {
+  return fetch(`${process.env.SUPABASE_URL}/auth/v1/logout`, { method: "POST", headers: { apikey: process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${token}` } });
+}
+
+export async function verifiedUser(req, res) {
+  let token = readBearer(req) || readCookie(req, ACCESS_COOKIE);
   if (!token) return null;
-  const response = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+  let response = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
     headers: {
       apikey: process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY,
       authorization: `Bearer ${token}`
     }
   });
+  if (!response.ok && res) {
+    const refreshToken = readCookie(req, REFRESH_COOKIE);
+    if (refreshToken) {
+      const refreshed = await authFetch("token?grant_type=refresh_token", { refresh_token: refreshToken });
+      const session = await refreshed.json().catch(() => null);
+      if (refreshed.ok) {
+        setAuthCookies(res, session);
+        token = session.access_token;
+        response = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, { headers: { apikey: process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${token}` } });
+      }
+    }
+  }
   if (!response.ok) return null;
   return response.json();
 }
@@ -46,7 +105,9 @@ export function deviceToken(req, res) {
   const match = cookies.match(new RegExp(`(?:^|;\\s*)${DEVICE_COOKIE}=([^;]+)`));
   if (match?.[1]) return decodeURIComponent(match[1]);
   const token = crypto.randomBytes(32).toString("base64url");
-  res.setHeader("Set-Cookie", `${DEVICE_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`);
+  const deviceCookie = `${DEVICE_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`;
+  const existing = res.getHeader("Set-Cookie");
+  res.setHeader("Set-Cookie", existing ? [...(Array.isArray(existing) ? existing : [existing]), deviceCookie] : deviceCookie);
   return token;
 }
 
@@ -75,8 +136,7 @@ export async function rpc(name, payload) {
 }
 
 export function validDuration(value) {
-  const duration = Number(value);
-  return Number.isInteger(duration) && ALLOWED_DURATIONS.includes(duration) ? duration : null;
+  return Number.isInteger(value) && ALLOWED_DURATIONS.includes(value) ? value : null;
 }
 
 export function difficultyForDuration(duration) {

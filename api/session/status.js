@@ -5,7 +5,7 @@ export default async function handler(req, res) {
   const setupError = configError();
   if (setupError) return json(res, 503, { error: setupError });
   try {
-    const user = await verifiedUser(req);
+    const user = await verifiedUser(req, res);
     if (!user) return json(res, 401, { error: "Authentication required" });
     const token = deviceToken(req, res);
     const status = await rpc("cluebound_session_status", { p_user_id: user.id, p_device_hash: hashDeviceToken(token) });

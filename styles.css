@@ -83,6 +83,13 @@ p { color: #d4d8d7; line-height: 1.65; }
 .modal p { color: #35414a; }
 .modal h2, .modal h3 { color: var(--ink); }
 .modal .button.secondary { color: var(--ink); border-color: rgba(24,33,42,.3); }
+.auth-panel { max-width: 540px; padding: clamp(28px, 5vw, 52px); }
+.auth-panel form { display: grid; gap: 16px; margin: 24px 0 14px; }
+.auth-panel label { display: grid; gap: 7px; color: var(--ink); font-weight: 700; }
+.auth-panel input { width: 100%; padding: 12px; border: 1px solid #b9a98c; background: #fffaf0; color: var(--ink); }
+.auth-error { color: #a7513a; font-weight: 700; }
+.auth-message { color: #3c7655; font-weight: 700; }
+.auth-switch { color: var(--ink) !important; border-color: rgba(24,33,42,.3) !important; }
 .evidence { border-left: 3px solid var(--gold); background: rgba(16,25,35,.06); padding: 12px 15px; margin: 14px 0; color: #35414a; }
 .answer-row { display: flex; gap: 10px; margin: 18px 0 8px; }
 .answer-row input { min-width: 0; flex: 1; padding: 13px; border: 1px solid #b9a98c; background: #fffaf0; color: var(--ink); }

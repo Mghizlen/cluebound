@@ -44,7 +44,7 @@ Upload the folder to a static host such as GitHub Pages. Keep `index.html`, `sty
 
 ## Server session foundation
 
-The repository now includes a staged Supabase/Vercel session foundation in `api/`, `supabase/migrations/`, `.env.example`, and `ARCHITECTURE.md`. The existing static game remains playable until Supabase is configured; the API intentionally returns a configuration error rather than authorizing an unverified session.
+The repository now includes a staged Supabase/Vercel session integration in `api/`, `supabase/migrations/`, `.env.example`, and `ARCHITECTURE.md`. The frontend provides sign-in/sign-up, checks server status before showing the game, uses the server expiry timestamp for its display timer, and blocks gameplay when authorization cannot be verified. The API intentionally returns a configuration error rather than authorizing an unverified session.
 
 To enable it:
 
@@ -52,9 +52,11 @@ To enable it:
 2. Configure `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and the server-only `SUPABASE_SERVICE_ROLE_KEY` in Vercel. Never expose the service-role key to the browser.
 3. Deploy the project with `vercel --prod` and configure Supabase Auth redirect URLs for the deployed domain.
 
+Authentication endpoints are `/api/auth/signup`, `/api/auth/signin`, `/api/auth/signout`, and `/api/auth/me`. Session endpoints are `/api/session/status`, `/api/session/start`, and `/api/session/heartbeat`.
+
 The API routes use verified Supabase bearer tokens, a Secure HttpOnly device cookie hash, server-created UTC timestamps, an advisory transaction lock, and a cooldown anchored to the stored expiry plus 24 hours. The device binding is supplementary; users can delete a browser cookie, so account-level server enforcement remains primary.
 
-The Tauri desktop milestone is not enabled yet because Rust/Cargo is not installed in the current environment. The static frontend is suitable for a later Tauri wrapper once the toolchain is installed.
+The Tauri desktop milestone is not enabled yet because Rust/Cargo is not installed in the current environment. The static frontend is suitable for a later Tauri wrapper once the toolchain is installed. Real authentication, cooldown, and cross-device behavior still require a configured Supabase project and could not be integration-tested in this environment.
 
 ## Verification
 
@@ -62,6 +64,12 @@ The app can be syntax-checked with:
 
 ```powershell
 node --check app.js
+```
+
+The dependency-free API contract checks run with:
+
+```powershell
+node test-api.mjs
 ```
 
 For a manual smoke test, start the static server, choose a short duration, inspect each room's evidence, solve the five answers above, and verify the completion summary. Refreshing during an active session should restore the same deadline rather than starting a new one.

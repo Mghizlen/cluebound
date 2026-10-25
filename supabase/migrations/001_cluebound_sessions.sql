@@ -79,7 +79,7 @@ begin
   end if;
   select max(cooldown_until) into cooldown from public.cluebound_sessions where user_id = p_user_id and cooldown_until > now();
   if current_session.id is not null and current_session.status = 'active' then
-    return jsonb_build_object('state', 'active', 'same_device', current_session.device_hash = p_device_hash, 'session_id', current_session.id, 'difficulty', current_session.difficulty, 'started_at', current_session.started_at, 'expires_at', current_session.expires_at, 'progress', current_session.progress);
+    return jsonb_build_object('state', 'active', 'same_device', current_session.device_hash = p_device_hash, 'session_id', current_session.id, 'duration_minutes', current_session.duration_minutes, 'difficulty', current_session.difficulty, 'started_at', current_session.started_at, 'expires_at', current_session.expires_at, 'progress', current_session.progress);
   end if;
   if cooldown is not null then return jsonb_build_object('state', 'cooldown', 'cooldown_until', cooldown); end if;
   return jsonb_build_object('state', 'eligible');
