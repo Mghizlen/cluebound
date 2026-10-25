@@ -1,0 +1,16 @@
+import { configError, deviceToken, hashDeviceToken, json, rpc, verifiedUser } from "../_lib/session.js";
+
+export default async function handler(req, res) {
+  if (req.method !== "GET") return json(res, 405, { error: "Method not allowed" }, { Allow: "GET" });
+  const setupError = configError();
+  if (setupError) return json(res, 503, { error: setupError });
+  try {
+    const user = await verifiedUser(req);
+    if (!user) return json(res, 401, { error: "Authentication required" });
+    const token = deviceToken(req, res);
+    const status = await rpc("cluebound_session_status", { p_user_id: user.id, p_device_hash: hashDeviceToken(token) });
+    return json(res, 200, { authenticated: true, ...status, server_time: new Date().toISOString() });
+  } catch (error) {
+    return json(res, error.status === 409 ? 409 : 502, { error: "Session status is temporarily unavailable" });
+  }
+}

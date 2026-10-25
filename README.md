@@ -42,6 +42,20 @@ This is a client-side static game. A technically advanced user can manipulate th
 
 Upload the folder to a static host such as GitHub Pages. Keep `index.html`, `styles.css`, `app.js`, and `README.md` together in the published directory. No server, API key, account system, or database is needed.
 
+## Server session foundation
+
+The repository now includes a staged Supabase/Vercel session foundation in `api/`, `supabase/migrations/`, `.env.example`, and `ARCHITECTURE.md`. The existing static game remains playable until Supabase is configured; the API intentionally returns a configuration error rather than authorizing an unverified session.
+
+To enable it:
+
+1. Create a Supabase project and apply `supabase/migrations/001_cluebound_sessions.sql` through the Supabase SQL editor or CLI.
+2. Configure `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and the server-only `SUPABASE_SERVICE_ROLE_KEY` in Vercel. Never expose the service-role key to the browser.
+3. Deploy the project with `vercel --prod` and configure Supabase Auth redirect URLs for the deployed domain.
+
+The API routes use verified Supabase bearer tokens, a Secure HttpOnly device cookie hash, server-created UTC timestamps, an advisory transaction lock, and a cooldown anchored to the stored expiry plus 24 hours. The device binding is supplementary; users can delete a browser cookie, so account-level server enforcement remains primary.
+
+The Tauri desktop milestone is not enabled yet because Rust/Cargo is not installed in the current environment. The static frontend is suitable for a later Tauri wrapper once the toolchain is installed.
+
 ## Verification
 
 The app can be syntax-checked with:
