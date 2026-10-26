@@ -1,24 +1,44 @@
 # Cluebound Architecture
 
-## Current system
+## System boundary
 
-Cluebound is a static HTML/CSS/vanilla JavaScript game deployed through Vercel. `index.html` loads `app.js` and `styles.css`; `app.js` owns the five-stage content, adaptive difficulty, puzzle progression, local save state, and client deadline display. `test-game.mjs` runs dependency-free Node checks. There is currently no package manager, server route, authentication layer, database, or desktop wrapper.
+Cluebound is a dependency-light HTML/CSS/vanilla JavaScript frontend served by Vercel. `index.html` loads `app.js` and `styles.css`; Vercel serverless functions under `api/` form the authentication and session boundary. Supabase Auth verifies identities and PostgreSQL RPCs own session authorization.
 
-## Implemented backend foundation
+The existing game remains in one browser module intentionally. Its responsibilities are separated internally into stage data, state transitions, persistence, API calls, renderers, modal handling, and event delegation. A later module split is possible, but introducing import boundaries now would add deployment and test complexity without changing the security model.
 
-- `api/session/status.js` authenticates a Supabase bearer token and returns server-owned session state.
-- `api/session/start.js` accepts only 15, 30, 60, 90, or 120 minutes and derives the difficulty server-side.
-- `api/session/heartbeat.js` rechecks expiry without extending it.
-- `api/auth/signup.js`, `api/auth/signin.js`, `api/auth/signout.js`, and `api/auth/me.js` provide the frontend authentication boundary using HttpOnly access and refresh cookies.
-- `api/_lib/session.js` centralizes token verification, device-cookie hashing, duration validation, and Supabase RPC calls.
-- `supabase/migrations/001_cluebound_sessions.sql` defines the session table, RLS read policy, device binding hash, server RPCs, and cooldown anchored to `expires_at + 24 hours`.
+## Request flow
 
-The existing game shell is preserved, but gameplay is intentionally blocked behind authentication and server authorization. The API returns HTTP 503 until Vercel environment variables and the migration are configured; it does not silently authorize an unverified server session.
+1. The browser calls `/api/auth/me` on startup.
+2. Auth routes use `SUPABASE_ANON_KEY` for Supabase Auth REST calls and set Secure, HttpOnly access/refresh cookies.
+3. Authenticated session routes verify the user token and create or read a one-year device cookie whose SHA-256 hash is stored server-side.
+4. `/api/session/start` accepts only an allowlisted duration. The database derives timestamps and enforces the difficulty mapping, active-session lock, device conflict, and cooldown.
+5. The browser displays the server deadline and periodically rechecks status. Local storage can restore puzzle progress only when the server session ID and deadline match.
 
-## Security boundaries
+## API responsibilities
 
-The browser remains responsible only for rendering and local puzzle state. Supabase Auth identifies the player, Vercel routes verify the bearer token, and the database RPC owns duration, timestamps, active-session locking, device binding, and cooldown. Device cookies are supplemental and can be removed; account-level cooldown is the primary control.
+- `api/_lib/session.js`: configuration checks, Supabase Auth calls, token refresh, cookie handling, device hashing, RPC calls, and known RPC error mapping.
+- `api/auth/signup.js`: account creation and confirmation-required response.
+- `api/auth/signin.js`: password sign-in and Auth cookie creation.
+- `api/auth/signout.js`: Auth logout and cookie cleanup.
+- `api/auth/me.js`: authenticated identity check with safe upstream failure handling.
+- `api/session/status.js`: authoritative active/cooldown/device state.
+- `api/session/start.js`: validated start or same-device resume.
+- `api/session/heartbeat.js`: expiry/status revalidation without extending a deadline.
 
-## Next milestone
+## Database security model
 
-The next staged milestone is configuring Supabase and exercising real sign-in, cooldown, and device-conflict transitions. Tauri packaging should follow after installing Rust/Tauri tooling and proving the bundled static frontend works offline.
+`public.cluebound_sessions` stores user-owned session records. RLS permits player reads, while direct client writes and RPC execution are revoked from public/authenticated roles. The Vercel server uses the service-role key only for the two security-definer RPCs. The RPCs validate identity and device-hash shape, set an explicit `public, pg_temp` search path, use a per-user advisory transaction lock, and anchor cooldown to `expires_at + interval '24 hours'`.
+
+The migration has not been applied automatically. Review and apply it through an authorized Supabase workflow, then verify function privileges and policies in the target project.
+
+## Frontend responsibilities
+
+`app.js` owns the authoritative client view model and preserves the five stages, adaptive difficulty, evidence, inventory, hints, timer display, pause behavior, expiry screen, and compatible local puzzle progress. The browser is never trusted for session expiry or cooldown. `styles.css` defines the dark navy, cream, and gold visual system, accessible focus treatment, auth states, modal layout, and responsive rules.
+
+## Environment contract
+
+Use only `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`. The public key is required for Auth REST calls; the service-role key is required only inside Vercel RPC calls. No database connection string is needed. `.env.example` contains placeholders only, and `.env` is ignored.
+
+## Validation and incomplete work
+
+The dependency-free tests cover five stages, answers, difficulty plans, session bounds, duration validation, known RPC errors, and auth rendering contracts. Syntax checks cover all API routes. Browser screenshots, real Supabase Auth, email confirmation, refresh rotation, database concurrency, cooldown transitions, device conflicts, and Vercel environment verification still require live/manual testing. Credential rotation must be completed manually because previously exposed privileged credentials are considered compromised. Tauri/Steam packaging remains incomplete until Rust/Tauri tooling is installed.

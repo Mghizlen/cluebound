@@ -33,7 +33,7 @@ create or replace function public.cluebound_start_session(
   p_difficulty text,
   p_device_hash text
 ) returns jsonb
-language plpgsql security definer set search_path = public
+language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare
   current_session public.cluebound_sessions;
@@ -69,9 +69,12 @@ end;
 $$;
 
 create or replace function public.cluebound_session_status(p_user_id uuid, p_device_hash text)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
 declare current_session public.cluebound_sessions; cooldown timestamptz;
 begin
+  if p_user_id is null or p_device_hash is null or length(p_device_hash) <> 64 then
+    raise exception using errcode = '22023', message = 'Invalid session identity';
+  end if;
   perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
   select * into current_session from public.cluebound_sessions where user_id = p_user_id and status = 'active' order by created_at desc limit 1 for update;
   if current_session.id is not null and current_session.expires_at <= now() then

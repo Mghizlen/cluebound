@@ -1,28 +1,34 @@
 # Cluebound
 
-Cluebound is a static, five-stage mystery and treasure-hunt game set in the Ashcroft Estate. Investigate rooms, collect evidence, solve connected puzzles, and recover the Star of Ashcroft.
+Cluebound is a five-stage Ashcroft Estate mystery game. Investigate rooms, collect evidence, solve connected puzzles, and recover the Star of Ashcroft.
 
-## Run locally
+## Folder structure
 
-No build step or dependencies are required. Open `index.html` in a modern desktop browser, or serve the folder with any static server:
+```text
+index.html                 Static browser entry point
+app.js                     Game state, puzzle data, rendering, and API flow
+styles.css                 Visual tokens, layout, responsive and accessibility styles
+api/_lib/session.js        Shared Auth, cookies, device tokens, and RPC helpers
+api/auth/                  Signup, signin, signout, and current-user routes
+api/session/               Status, start/resume, and heartbeat routes
+supabase/migrations/       Database schema and authoritative session RPCs
+test-game.mjs              Dependency-free game and UI contract checks
+test-api.mjs               API validation and error contract checks
+```
+
+## Local development
+
+Serve the repository over HTTP so browser modules and API routes behave predictably:
 
 ```powershell
 python -m http.server 8000
 ```
 
-Then visit `http://localhost:8000`.
+The static frontend is available at `http://localhost:8000`. The Python server does not execute the Vercel API routes; use a Vercel development environment with configured variables for authenticated local integration testing.
 
-## How to play
+## Gameplay
 
-Choose a session duration before beginning. The duration selects the difficulty automatically:
-
-- **15 minutes - Detective:** straightforward clues, fewer objects, and one puzzle step per room.
-- **30 minutes - Investigator:** more objects, two evidence-based puzzle steps, and misleading details.
-- **60 minutes - Master Detective:** three connected steps per room and evidence from earlier rooms.
-- **90 minutes - Expert:** four linked steps per room, more objects, and subtler hints.
-- **120 minutes - Legendary Detective:** five connected steps per room and the largest object set.
-
-The selected difficulty appears in the duration screen, tutorial, and game header. Click highlighted objects to inspect them, read the investigator's log, gather the required evidence, enter puzzle answers, and use hints when needed. The base answer key for the Detective path is:
+The five durations select five server-validated difficulty levels: 15 Detective, 30 Investigator, 60 Master Detective, 90 Expert, and 120 Legendary Detective minutes. Higher levels add objects, evidence requirements, linked inventory requirements, and puzzle steps. The puzzle answers are unchanged:
 
 1. `clock`
 2. `SFHF`
@@ -30,46 +36,41 @@ The selected difficulty appears in the duration screen, tutorial, and game heade
 4. `GLT`
 5. `clock`
 
-Answers are validated in the game and are not case-sensitive. The final screen reports completion time, stages solved, hints used, and rooms explored.
+The browser renders progress and preserves compatible local progress, but it never authorizes a session. The server's `expires_at` controls the timer, cooldown, and resume behavior.
 
-## Session limit
+## Supabase and Vercel setup
 
-The duration selector offers 15, 30, 60, 90, and 120 minutes. The deadline starts only when a session begins. It is persisted in local storage and calculated from `Date.now()` rather than a decrementing counter, so hiding the tab, pausing, refreshing, or returning to the page cannot provide extra time during ordinary use. Expiry freezes gameplay and shows the required break message. A new session always requires a fresh duration selection.
+Required Vercel variables are:
 
-This is a client-side static game. A technically advanced user can manipulate their own browser clock or local storage, so the timer is a responsible-gaming feature for normal use, not a tamper-proof security boundary.
+- `SUPABASE_URL`: the Supabase project URL.
+- `SUPABASE_ANON_KEY`: the public Supabase Auth API key. It is used only for Auth REST requests.
+- `SUPABASE_SERVICE_ROLE_KEY`: server-only key used for the protected session RPCs.
 
-## Publish for classmates
+Use placeholders only in `.env.example`. Do not add `.env` files, database passwords, JWT signing secrets, or privileged keys to source control or frontend code. The API returns `503` when required server variables are absent rather than authorizing gameplay.
 
-Upload the folder to a static host such as GitHub Pages. Keep `index.html`, `styles.css`, `app.js`, and `README.md` together in the published directory. No server, API key, account system, or database is needed.
+Safe rollout:
 
-## Server session foundation
+1. Create or select the existing Supabase project.
+2. Review `supabase/migrations/001_cluebound_sessions.sql` and apply it through the Supabase SQL editor or CLI only after authorization.
+3. Add the three variables to Vercel Development, Preview, and Production environments as appropriate. Confirm names without printing values.
+4. Configure Supabase Auth site and redirect URLs for the local and deployed origins.
+5. Run authenticated smoke tests against a non-production account before any production deployment.
 
-The repository now includes a staged Supabase/Vercel session integration in `api/`, `supabase/migrations/`, `.env.example`, and `ARCHITECTURE.md`. The frontend provides sign-in/sign-up, checks server status before showing the game, uses the server expiry timestamp for its display timer, and blocks gameplay when authorization cannot be verified. The API intentionally returns a configuration error rather than authorizing an unverified session.
+Authentication routes are `/api/auth/signup`, `/api/auth/signin`, `/api/auth/signout`, and `/api/auth/me`. Session routes are `/api/session/status`, `/api/session/start`, and `/api/session/heartbeat`.
 
-To enable it:
+The database owns duration validation, UTC timestamps, active-session locking, device conflicts, and the 24-hour cooldown measured from the original expiry. HttpOnly cookies carry Auth tokens and a hashed device token. Device binding is supplementary; account-level session and cooldown rules remain authoritative.
 
-1. Create a Supabase project and apply `supabase/migrations/001_cluebound_sessions.sql` through the Supabase SQL editor or CLI.
-2. Configure `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and the server-only `SUPABASE_SERVICE_ROLE_KEY` in Vercel. Never expose the service-role key to the browser.
-3. Deploy the project with `vercel --prod` and configure Supabase Auth redirect URLs for the deployed domain.
+## Credential rotation checklist
 
-Authentication endpoints are `/api/auth/signup`, `/api/auth/signin`, `/api/auth/signout`, and `/api/auth/me`. Session endpoints are `/api/session/status`, `/api/session/start`, and `/api/session/heartbeat`.
-
-The API routes use verified Supabase bearer tokens, a Secure HttpOnly device cookie hash, server-created UTC timestamps, an advisory transaction lock, and a cooldown anchored to the stored expiry plus 24 hours. The device binding is supplementary; users can delete a browser cookie, so account-level server enforcement remains primary.
-
-The Tauri desktop milestone is not enabled yet because Rust/Cargo is not installed in the current environment. The static frontend is suitable for a later Tauri wrapper once the toolchain is installed. Real authentication, cooldown, and cross-device behavior still require a configured Supabase project and could not be integration-tested in this environment.
+Previously exposed Supabase database passwords, service-role/secret keys, and JWT signing secrets must be treated as compromised. Rotate them in the Supabase dashboard, update the matching Vercel environment variables, redeploy, and revoke old sessions or keys where Supabase provides that control. Do not paste the old or new values into issues, chat, logs, commits, or documentation. Rotation has not been performed automatically.
 
 ## Verification
 
-The app can be syntax-checked with:
-
 ```powershell
 node --check app.js
-```
-
-The dependency-free API contract checks run with:
-
-```powershell
+node test-game.mjs
 node test-api.mjs
+Get-ChildItem api -Recurse -Filter *.js | ForEach-Object { node --check $_.FullName }
 ```
 
-For a manual smoke test, start the static server, choose a short duration, inspect each room's evidence, solve the five answers above, and verify the completion summary. Refreshing during an active session should restore the same deadline rather than starting a new one.
+Manual accessibility checks should cover keyboard-only auth, visible focus, readable error/success states, modal focus, duration selection announcements, and mobile widths. Live Supabase signup, email confirmation, refresh-token rotation, cooldown transitions, device conflicts, and concurrent starts still require configured integration testing. Tauri packaging is incomplete because the Rust toolchain is not installed.
