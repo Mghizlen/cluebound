@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import {
   difficultyForDuration,
   knownSessionError,
+  publicAuthKey,
+  serverKey,
+  supabaseUrl,
   validDuration,
 } from "./api/_lib/session.js";
 import startHandler from "./api/session/start.js";
@@ -23,6 +26,28 @@ assert.deepEqual(
   { status: 409, error: "Account is in cooldown" },
 );
 assert.equal(knownSessionError({ detail: { code: "XX000" } }), null);
+const previousAliases = {
+  url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+  anon: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  publishable: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  secret: process.env.SUPABASE_SECRET_KEY,
+};
+process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "public-key";
+process.env.SUPABASE_SECRET_KEY = "server-key";
+assert.equal(supabaseUrl(), "https://example.supabase.co");
+assert.equal(publicAuthKey(), "public-key");
+assert.equal(serverKey(), "server-key");
+for (const [name, value] of Object.entries(previousAliases)) {
+  const key = {
+    url: "NEXT_PUBLIC_SUPABASE_URL",
+    anon: "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    publishable: "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+    secret: "SUPABASE_SECRET_KEY",
+  }[name];
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
 
 const previousUrl = process.env.SUPABASE_URL;
 const previousKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

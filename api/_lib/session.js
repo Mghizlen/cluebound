@@ -12,12 +12,24 @@ const DEVICE_COOKIE = "cluebound_device";
 const ACCESS_COOKIE = "cluebound_access";
 const REFRESH_COOKIE = "cluebound_refresh";
 
+export function supabaseUrl() {
+  return process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+}
+
+export function publicAuthKey() {
+  return (
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+  );
+}
+
+export function serverKey() {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
+}
+
 export function configError() {
-  if (
-    !process.env.SUPABASE_URL ||
-    !process.env.SUPABASE_ANON_KEY ||
-    !process.env.SUPABASE_SERVICE_ROLE_KEY
-  ) {
+  if (!supabaseUrl() || !publicAuthKey() || !serverKey()) {
     return "Session service is not configured. Add the Supabase URL, public Auth key, and server key in Vercel.";
   }
   return null;
@@ -69,10 +81,10 @@ export function clearAuthCookies(res) {
 }
 
 async function authFetch(path, body) {
-  return fetch(`${process.env.SUPABASE_URL}/auth/v1/${path}`, {
+  return fetch(`${supabaseUrl()}/auth/v1/${path}`, {
     method: "POST",
     headers: {
-      apikey: process.env.SUPABASE_ANON_KEY,
+      apikey: publicAuthKey(),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
@@ -93,10 +105,10 @@ export async function authSignup(email, password) {
 }
 
 export async function authSignout(token) {
-  return fetch(`${process.env.SUPABASE_URL}/auth/v1/logout`, {
+  return fetch(`${supabaseUrl()}/auth/v1/logout`, {
     method: "POST",
     headers: {
-      apikey: process.env.SUPABASE_ANON_KEY,
+      apikey: publicAuthKey(),
       authorization: `Bearer ${token}`,
     },
   });
@@ -105,9 +117,9 @@ export async function authSignout(token) {
 export async function verifiedUser(req, res) {
   let token = readBearer(req) || readCookie(req, ACCESS_COOKIE);
   if (!token) return null;
-  let response = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+  let response = await fetch(`${supabaseUrl()}/auth/v1/user`, {
     headers: {
-      apikey: process.env.SUPABASE_ANON_KEY,
+      apikey: publicAuthKey(),
       authorization: `Bearer ${token}`,
     },
   });
@@ -121,9 +133,9 @@ export async function verifiedUser(req, res) {
       if (refreshed.ok) {
         setAuthCookies(res, session);
         token = session.access_token;
-        response = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+        response = await fetch(`${supabaseUrl()}/auth/v1/user`, {
           headers: {
-            apikey: process.env.SUPABASE_ANON_KEY,
+            apikey: publicAuthKey(),
             authorization: `Bearer ${token}`,
           },
         });
@@ -158,12 +170,12 @@ export function hashDeviceToken(token) {
 
 export async function rpc(name, payload) {
   const response = await fetch(
-    `${process.env.SUPABASE_URL}/rest/v1/rpc/${name}`,
+    `${supabaseUrl()}/rest/v1/rpc/${name}`,
     {
       method: "POST",
       headers: {
-        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-        authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+        apikey: serverKey(),
+        authorization: `Bearer ${serverKey()}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
@@ -174,6 +186,11 @@ export async function rpc(name, payload) {
     const error = new Error("Supabase session operation failed");
     error.status = response.status;
     error.detail = data;
+    console.error("Supabase session RPC failed", {
+      operation: name,
+      status: response.status,
+      code: data?.code || null,
+    });
     throw error;
   }
   return data;

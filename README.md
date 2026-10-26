@@ -40,11 +40,13 @@ The browser renders progress and preserves compatible local progress, but it nev
 
 ## Supabase and Vercel setup
 
-Required Vercel variables are:
+Recommended Vercel variables are:
 
 - `SUPABASE_URL`: the Supabase project URL.
 - `SUPABASE_ANON_KEY`: the public Supabase Auth API key. It is used only for Auth REST requests.
 - `SUPABASE_SERVICE_ROLE_KEY`: server-only key used for the protected session RPCs.
+
+The server also accepts the aliases commonly created by Supabase integrations: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY`. Prefer the non-`NEXT_PUBLIC_` names for server configuration. Never put a secret/service-role key in a `NEXT_PUBLIC_` variable.
 
 Use placeholders only in `.env.example`. Do not add `.env` files, database passwords, JWT signing secrets, or privileged keys to source control or frontend code. The API returns `503` when required server variables are absent rather than authorizing gameplay.
 
